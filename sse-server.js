@@ -244,9 +244,6 @@ async function handleMcpPost(req, res) {
 app.get("/sse", handleSse);
 app.get("/sse/mcp", handleSse);
 
-app.post("/message", handleMcpPost);
-app.post("/sse/mcp", handleMcpPost);
-
 const httpServer = app.listen(PORT, HOST, () => {
   console.log(`SSE MCP Server running on http://${HOST}:${PORT}`);
 });
