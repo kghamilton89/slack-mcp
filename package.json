@@ -1,6 +1,6 @@
 {
   "name": "slack-mcp-server",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Dockerized Slack MCP Server for Strawberry Browser integration",
   "license": "MIT",
   "author": "Kenneth Hamilton",
