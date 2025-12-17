@@ -1,0 +1,32 @@
+{
+  "name": "slack-mcp-server",
+  "version": "1.0.0",
+  "description": "Dockerized Slack MCP Server for Strawberry Browser integration",
+  "license": "MIT",
+  "author": "Kenneth Hamilton",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kghamilton89/slack-mcp"
+  },
+  "type": "module",
+  "bin": {
+    "slack-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && shx chmod +x dist/*.js",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "shx": "^0.3.4",
+    "typescript": "^5.6.2"
+  }
+}

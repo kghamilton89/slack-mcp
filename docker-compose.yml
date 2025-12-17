@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  slack-mcp:
+    build: .
+    image: slack-mcp-server:latest
+    container_name: slack-mcp-server
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_TEAM_ID=${SLACK_TEAM_ID}
+      - SLACK_CHANNEL_IDS=${SLACK_CHANNEL_IDS}
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
