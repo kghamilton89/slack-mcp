@@ -37,25 +37,17 @@ app.get("/health", (req, res) => {
 
 function getSlackClient() {
   const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) {
-    throw new Error("Missing SLACK_BOT_TOKEN env var");
-  }
+  if (!token) throw new Error("Missing SLACK_BOT_TOKEN env var");
   return new WebClient(token);
 }
 
 function getSlackTeamId() {
   const teamId = process.env.SLACK_TEAM_ID;
-  if (!teamId) {
-    throw new Error("Missing SLACK_TEAM_ID env var");
-  }
+  if (!teamId) throw new Error("Missing SLACK_TEAM_ID env var");
   return teamId;
 }
 
-async function handleSse(req, res) {
-  console.log("New SSE connection established");
-
-  const transport = new SSEServerTransport("/message", res);
-
+function buildMcpServer() {
   const server = new Server(
     { name: "slack-mcp-server", version: "0.1.0" },
     { capabilities: { tools: {} } }
@@ -170,11 +162,23 @@ async function handleSse(req, res) {
     }
   });
 
+  return server;
+}
+
+const transportsBySessionId = new Map();
+
+async function handleSse(req, res) {
+  const transport = new SSEServerTransport("/sse/mcp", res);
+  const sessionId = transport.sessionId;
+
+  transportsBySessionId.set(sessionId, transport);
+
+  const server = buildMcpServer();
+
   try {
     await server.connect(transport);
-    console.log("MCP server connected to SSE transport");
   } catch (err) {
-    console.error("Failed to connect MCP server to SSE transport:", err);
+    transportsBySessionId.delete(sessionId);
     try {
       if (!res.headersSent) res.status(500);
       res.end();
@@ -183,23 +187,68 @@ async function handleSse(req, res) {
   }
 
   req.on("close", () => {
-    console.log("Client disconnected");
+    transportsBySessionId.delete(sessionId);
   });
 }
 
-async function handleMessage(req, res) {
-  res.status(200).json({ status: "ok" });
+function extractSessionId(req) {
+  const q = req.query || {};
+  return (
+    q.sessionId ||
+    q.sessionID ||
+    q.session_id ||
+    q.session ||
+    (typeof q === "string" ? q : null)
+  );
+}
+
+async function handleMcpPost(req, res) {
+  const sessionId = extractSessionId(req);
+
+  if (!sessionId) {
+    res.status(400).json({
+      error: "Missing sessionId query parameter",
+    });
+    return;
+  }
+
+  const transport = transportsBySessionId.get(sessionId);
+  if (!transport) {
+    res.status(404).json({
+      error: "Unknown or expired sessionId",
+    });
+    return;
+  }
+
+  try {
+    if (typeof transport.handlePostMessage === "function") {
+      await transport.handlePostMessage(req, res);
+      return;
+    }
+
+    if (typeof transport.handlePost === "function") {
+      await transport.handlePost(req, res);
+      return;
+    }
+
+    res.status(500).json({
+      error: "Transport does not expose a POST handler",
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err?.message || String(err),
+    });
+  }
 }
 
 app.get("/sse", handleSse);
 app.get("/sse/mcp", handleSse);
 
-app.post("/message", handleMessage);
-app.post("/sse/mcp", handleMessage);
+app.post("/message", handleMcpPost);
+app.post("/sse/mcp", handleMcpPost);
 
 const httpServer = app.listen(PORT, HOST, () => {
   console.log(`SSE MCP Server running on http://${HOST}:${PORT}`);
-  console.log("SSE endpoint available at /sse");
 });
 
 httpServer.keepAliveTimeout = 65_000;
