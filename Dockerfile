@@ -1,7 +1,7 @@
 FROM node:22.12-alpine AS builder
 WORKDIR /build
 
-# Copy package files
+# Copy package files and tsconfig
 COPY package*.json ./
 COPY tsconfig.json ./
 
