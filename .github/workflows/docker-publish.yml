@@ -26,19 +26,20 @@ jobs:
     - name: Get next version
       id: version
       run: |
-        # Get the latest tag that matches v0.* pattern
-        LATEST_TAG=$(git tag -l "v0.*" | sort -V | tail -n1)
+        # Get the latest tag that matches v0.*.* pattern
+        LATEST_TAG=$(git tag -l "v0.*.*" | sort -V | tail -n1)
         
         if [ -z "$LATEST_TAG" ]; then
-          # No tags exist, start with 0.1
-          NEW_VERSION="0.1"
+          # No tags exist, start with 0.1.0
+          NEW_VERSION="0.1.0"
         else
-          # Extract version number and increment
+          # Extract version number and increment patch
           CURRENT_VERSION=${LATEST_TAG#v}
           MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
           MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
-          NEW_MINOR=$((MINOR + 1))
-          NEW_VERSION="${MAJOR}.${NEW_MINOR}"
+          PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
         fi
         
         echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
