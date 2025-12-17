@@ -25,6 +25,15 @@ app.use((req, res, next) => {
   next();
 });
 
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'Slack MCP Server is running' });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
 app.get('/sse', async (req, res) => {
   console.log('New SSE connection established');
   
