@@ -1,10 +1,12 @@
 import express from "express";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { randomUUID } from "node:crypto";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebClient } from "@slack/web-api";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  isInitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
@@ -16,8 +18,8 @@ app.use(express.json({ limit: "1mb" }));
 
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Session-Id");
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
@@ -47,7 +49,7 @@ function getSlackTeamId() {
   return teamId;
 }
 
-function buildMcpServer() {
+function createMcpServer() {
   const server = new Server(
     { name: "slack-mcp-server", version: "0.1.0" },
     { capabilities: { tools: {} } }
@@ -114,21 +116,14 @@ function buildMcpServer() {
             types: "public_channel",
           });
           return {
-            content: [
-              { type: "text", text: JSON.stringify(result.channels, null, 2) },
-            ],
+            content: [{ type: "text", text: JSON.stringify(result.channels, null, 2) }],
           };
         }
 
         case "slack_post_message": {
           const { channel_id, text } = request.params.arguments || {};
-          if (!channel_id || !text) {
-            throw new Error("Missing required arguments: channel_id, text");
-          }
-          const result = await slack.chat.postMessage({
-            channel: channel_id,
-            text,
-          });
+          if (!channel_id || !text) throw new Error("Missing required arguments: channel_id, text");
+          const result = await slack.chat.postMessage({ channel: channel_id, text });
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
@@ -137,17 +132,10 @@ function buildMcpServer() {
         case "slack_get_channel_history": {
           const { channel_id } = request.params.arguments || {};
           const limit = request.params.arguments?.limit || 10;
-          if (!channel_id) {
-            throw new Error("Missing required argument: channel_id");
-          }
-          const result = await slack.conversations.history({
-            channel: channel_id,
-            limit,
-          });
+          if (!channel_id) throw new Error("Missing required argument: channel_id");
+          const result = await slack.conversations.history({ channel: channel_id, limit });
           return {
-            content: [
-              { type: "text", text: JSON.stringify(result.messages, null, 2) },
-            ],
+            content: [{ type: "text", text: JSON.stringify(result.messages, null, 2) }],
           };
         }
 
@@ -165,87 +153,84 @@ function buildMcpServer() {
   return server;
 }
 
-const transportsBySessionId = new Map();
+const transports = new Map();
 
-async function handleSse(req, res) {
-  const transport = new SSEServerTransport("/sse/mcp", res);
-  const sessionId = transport.sessionId;
-
-  transportsBySessionId.set(sessionId, transport);
-
-  const server = buildMcpServer();
-
-  try {
-    await server.connect(transport);
-  } catch (err) {
-    transportsBySessionId.delete(sessionId);
-    try {
-      if (!res.headersSent) res.status(500);
-      res.end();
-    } catch (_) {}
-    return;
-  }
-
-  req.on("close", () => {
-    transportsBySessionId.delete(sessionId);
-  });
+function getSessionId(req) {
+  const raw = req.headers["mcp-session-id"] ?? req.headers["MCP-Session-Id"];
+  if (!raw) return undefined;
+  return Array.isArray(raw) ? raw[0] : String(raw);
 }
 
-function extractSessionId(req) {
-  const q = req.query || {};
-  return (
-    q.sessionId ||
-    q.sessionID ||
-    q.session_id ||
-    q.session ||
-    (typeof q === "string" ? q : null)
-  );
-}
+async function handleMcp(req, res) {
+  const sessionId = getSessionId(req);
+  let transport = sessionId ? transports.get(sessionId) : undefined;
 
-async function handleMcpPost(req, res) {
-  const sessionId = extractSessionId(req);
-
-  if (!sessionId) {
-    res.status(400).json({
-      error: "Missing sessionId query parameter",
-    });
-    return;
-  }
-
-  const transport = transportsBySessionId.get(sessionId);
   if (!transport) {
-    res.status(404).json({
-      error: "Unknown or expired sessionId",
+    const body = req.body;
+
+    if (!isInitializeRequest(body)) {
+      res.status(400).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Bad Request: No valid session; initialize required" },
+        id: body?.id ?? null,
+      });
+      return;
+    }
+
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (newSessionId) => {
+        transports.set(newSessionId, transport);
+      },
     });
+
+    transport.onclose = () => {
+      if (transport.sessionId) transports.delete(transport.sessionId);
+    };
+
+    const server = createMcpServer();
+    await server.connect(transport);
+  }
+
+  if (req.method === "POST") {
+    await transport.handleRequest(req, res, req.body);
     return;
   }
 
-  try {
-    if (typeof transport.handlePostMessage === "function") {
-      await transport.handlePostMessage(req, res);
-      return;
-    }
-
-    if (typeof transport.handlePost === "function") {
-      await transport.handlePost(req, res);
-      return;
-    }
-
-    res.status(500).json({
-      error: "Transport does not expose a POST handler",
-    });
-  } catch (err) {
-    res.status(500).json({
-      error: err?.message || String(err),
-    });
-  }
+  await transport.handleRequest(req, res);
 }
 
-app.get("/sse", handleSse);
-app.get("/sse/mcp", handleSse);
+app.post("/sse/mcp", (req, res) => {
+  handleMcp(req, res).catch((err) => {
+    try {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: `Internal Server Error: ${err?.message || err}` },
+        id: req.body?.id ?? null,
+      });
+    } catch (_) {}
+  });
+});
+
+app.get("/sse/mcp", (req, res) => {
+  handleMcp(req, res).catch(() => {
+    try {
+      res.status(500).end();
+    } catch (_) {}
+  });
+});
+
+app.delete("/sse/mcp", (req, res) => {
+  handleMcp(req, res).catch(() => {
+    try {
+      res.status(500).end();
+    } catch (_) {}
+  });
+});
 
 const httpServer = app.listen(PORT, HOST, () => {
-  console.log(`SSE MCP Server running on http://${HOST}:${PORT}`);
+  console.log(`MCP Server running on http://${HOST}:${PORT}`);
+  console.log("MCP endpoint available at /sse/mcp");
 });
 
 httpServer.keepAliveTimeout = 65_000;
