@@ -1,13 +1,14 @@
 import { spawn } from 'child_process';
 import express from 'express';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Store active sessions
-const sessions = new Map();
 
 // CORS middleware
 app.use((req, res, next) => {
@@ -20,76 +21,50 @@ app.use((req, res, next) => {
   next();
 });
 
-// SSE endpoint
 app.get('/sse', async (req, res) => {
-  const sessionId = crypto.randomUUID();
-  console.log(`New SSE connection: ${sessionId}`);
+  console.log('New SSE connection established');
   
-  // Set SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  
-  // Start the Docker container
-  const dockerProcess = spawn('docker', [
-    'run',
-    '-i',
-    '--rm',
-    '-e', `SLACK_BOT_TOKEN=${process.env.SLACK_BOT_TOKEN}`,
-    '-e', `SLACK_TEAM_ID=${process.env.SLACK_TEAM_ID}`,
-    'slack-mcp-server:latest'
-  ]);
-
-  // Store session
-  sessions.set(sessionId, { dockerProcess, res });
+  // Run the MCP server directly (not via Docker)
+  const serverProcess = spawn('node', [join(__dirname, 'dist', 'index.js')], {
+    env: {
+      ...process.env,
+      SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
+      SLACK_TEAM_ID: process.env.SLACK_TEAM_ID
+    }
+  });
 
   // Set up SSE transport
-  const transport = new SSEServerTransport(`/message?sessionId=${sessionId}`, res);
+  const transport = new SSEServerTransport('/message', res);
   
-  // Pipe Docker container output
-  dockerProcess.stdout.on('data', (data) => {
+  // Pipe server output to transport
+  serverProcess.stdout.on('data', (data) => {
     const message = data.toString();
-    console.log(`[${sessionId}] Docker output:`, message);
+    console.log('MCP output:', message);
   });
 
-  dockerProcess.stderr.on('data', (data) => {
-    console.error(`[${sessionId}] Docker error:`, data.toString());
+  serverProcess.stderr.on('data', (data) => {
+    console.error('MCP error:', data.toString());
   });
 
-  dockerProcess.on('close', (code) => {
-    console.log(`[${sessionId}] Docker process exited with code ${code}`);
-    sessions.delete(sessionId);
+  serverProcess.on('close', (code) => {
+    console.log(`MCP process exited with code ${code}`);
   });
 
   // Handle client disconnect
   req.on('close', () => {
-    console.log(`[${sessionId}] Client disconnected, stopping Docker container`);
-    dockerProcess.kill();
-    sessions.delete(sessionId);
+    console.log('Client disconnected, stopping MCP server');
+    serverProcess.kill();
   });
 
   await transport.start();
 });
 
-// Message endpoint
 app.post('/message', express.json(), async (req, res) => {
-  const sessionId = req.query.sessionId;
-  console.log(`[${sessionId}] Received message:`, req.body);
-  
-  const session = sessions.get(sessionId);
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-
-  // Forward message to Docker container stdin
-  if (session.dockerProcess && session.dockerProcess.stdin) {
-    session.dockerProcess.stdin.write(JSON.stringify(req.body) + '\n');
-  }
-
+  console.log('Received message:', req.body);
   res.json({ status: 'ok' });
 });
 
 app.listen(PORT, () => {
   console.log(`SSE MCP Server running on http://localhost:${PORT}`);
-  console.log(`Connect Strawberry to: http://localhost:${PORT}/sse`);
+  console.log(`SSE endpoint: http://localhost:${PORT}/sse`);
 });
