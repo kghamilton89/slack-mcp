@@ -151,7 +151,7 @@ app.post('/message', express.json(), async (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`SSE MCP Server running on port ${PORT}`);
   console.log(`SSE endpoint available at /sse`);
 });
