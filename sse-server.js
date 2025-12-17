@@ -54,11 +54,6 @@ function getSlackTeamId() {
 async function handleSse(req, res) {
   console.log("New SSE connection established");
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders?.();
-
   const transport = new SSEServerTransport("/message", res);
 
   const server = new Server(
@@ -181,7 +176,8 @@ async function handleSse(req, res) {
   } catch (err) {
     console.error("Failed to connect MCP server to SSE transport:", err);
     try {
-      res.status(500).end();
+      if (!res.headersSent) res.status(500);
+      res.end();
     } catch (_) {}
     return;
   }
