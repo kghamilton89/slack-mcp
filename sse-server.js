@@ -1,14 +1,18 @@
-import { spawn } from 'child_process';
 import express from 'express';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { WebClient } from '@slack/web-api';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Initialize Slack client
+const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
+const SLACK_TEAM_ID = process.env.SLACK_TEAM_ID;
 
 // CORS middleware
 app.use((req, res, next) => {
@@ -24,47 +28,130 @@ app.use((req, res, next) => {
 app.get('/sse', async (req, res) => {
   console.log('New SSE connection established');
   
-  // Run the MCP server directly (not via Docker)
-  const serverProcess = spawn('node', [join(__dirname, 'dist', 'index.js')], {
-    env: {
-      ...process.env,
-      SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
-      SLACK_TEAM_ID: process.env.SLACK_TEAM_ID
+  const transport = new SSEServerTransport('/message', res);
+  const server = new Server(
+    {
+      name: 'slack-mcp-server',
+      version: '0.1.0',
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+
+  // Define tools
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      {
+        name: 'slack_list_channels',
+        description: 'List public channels in the workspace',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: { type: 'number', description: 'Maximum number of channels', default: 100 }
+          }
+        }
+      },
+      {
+        name: 'slack_post_message',
+        description: 'Post a message to a Slack channel',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            channel_id: { type: 'string', description: 'Channel ID' },
+            text: { type: 'string', description: 'Message text' }
+          },
+          required: ['channel_id', 'text']
+        }
+      },
+      {
+        name: 'slack_get_channel_history',
+        description: 'Get recent messages from a channel',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            channel_id: { type: 'string', description: 'Channel ID' },
+            limit: { type: 'number', description: 'Number of messages', default: 10 }
+          },
+          required: ['channel_id']
+        }
+      }
+    ]
+  }));
+
+  // Handle tool calls
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    try {
+      switch (request.params.name) {
+        case 'slack_list_channels': {
+          const result = await slack.conversations.list({
+            team_id: SLACK_TEAM_ID,
+            limit: request.params.arguments?.limit || 100,
+            types: 'public_channel'
+          });
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(result.channels, null, 2)
+            }]
+          };
+        }
+        
+        case 'slack_post_message': {
+          const result = await slack.chat.postMessage({
+            channel: request.params.arguments.channel_id,
+            text: request.params.arguments.text
+          });
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(result, null, 2)
+            }]
+          };
+        }
+        
+        case 'slack_get_channel_history': {
+          const result = await slack.conversations.history({
+            channel: request.params.arguments.channel_id,
+            limit: request.params.arguments?.limit || 10
+          });
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(result.messages, null, 2)
+            }]
+          };
+        }
+        
+        default:
+          throw new Error(`Unknown tool: ${request.params.name}`);
+      }
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: ${error.message}`
+        }],
+        isError: true
+      };
     }
   });
 
-  // Set up SSE transport
-  const transport = new SSEServerTransport('/message', res);
-  
-  // Pipe server output to transport
-  serverProcess.stdout.on('data', (data) => {
-    const message = data.toString();
-    console.log('MCP output:', message);
-  });
+  await server.connect(transport);
+  console.log('MCP server connected to SSE transport');
 
-  serverProcess.stderr.on('data', (data) => {
-    console.error('MCP error:', data.toString());
-  });
-
-  serverProcess.on('close', (code) => {
-    console.log(`MCP process exited with code ${code}`);
-  });
-
-  // Handle client disconnect
   req.on('close', () => {
-    console.log('Client disconnected, stopping MCP server');
-    serverProcess.kill();
+    console.log('Client disconnected');
   });
-
-  await transport.start();
 });
 
 app.post('/message', express.json(), async (req, res) => {
-  console.log('Received message:', req.body);
   res.json({ status: 'ok' });
 });
 
 app.listen(PORT, () => {
-  console.log(`SSE MCP Server running on http://localhost:${PORT}`);
-  console.log(`SSE endpoint: http://localhost:${PORT}/sse`);
+  console.log(`SSE MCP Server running on port ${PORT}`);
+  console.log(`SSE endpoint available at /sse`);
 });
