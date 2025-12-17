@@ -14,7 +14,6 @@ const HOST = "0.0.0.0";
 
 app.use(express.json({ limit: "1mb" }));
 
-// CORS
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -52,7 +51,7 @@ function getSlackTeamId() {
   return teamId;
 }
 
-app.get("/sse", async (req, res) => {
+async function handleSse(req, res) {
   console.log("New SSE connection established");
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -190,11 +189,17 @@ app.get("/sse", async (req, res) => {
   req.on("close", () => {
     console.log("Client disconnected");
   });
-});
+}
 
-app.post("/message", async (req, res) => {
+async function handleMessage(req, res) {
   res.status(200).json({ status: "ok" });
-});
+}
+
+app.get("/sse", handleSse);
+app.get("/sse/mcp", handleSse);
+
+app.post("/message", handleMessage);
+app.post("/sse/mcp", handleMessage);
 
 const httpServer = app.listen(PORT, HOST, () => {
   console.log(`SSE MCP Server running on http://${HOST}:${PORT}`);
