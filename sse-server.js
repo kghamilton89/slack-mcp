@@ -1,166 +1,205 @@
-import express from 'express';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { WebClient } from '@slack/web-api';
+import express from "express";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { WebClient } from "@slack/web-api";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+} from "@modelcontextprotocol/sdk/types.js";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Initialize Slack client
-const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
-const SLACK_TEAM_ID = process.env.SLACK_TEAM_ID;
+const PORT = Number(process.env.PORT || 3000);
+const HOST = "0.0.0.0";
 
-// CORS middleware
+app.use(express.json({ limit: "1mb" }));
+
+// CORS
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'Slack MCP Server is running' });
+app.get("/", (req, res) => {
+  res.status(200).json({ status: "ok", message: "Slack MCP Server is running" });
 });
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy' });
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "healthy",
+    uptime_s: Math.round(process.uptime()),
+    hasSlackBotToken: Boolean(process.env.SLACK_BOT_TOKEN),
+    hasSlackTeamId: Boolean(process.env.SLACK_TEAM_ID),
+  });
 });
 
-app.get('/sse', async (req, res) => {
-  console.log('New SSE connection established');
-  
-  const transport = new SSEServerTransport('/message', res);
+function getSlackClient() {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) {
+    throw new Error("Missing SLACK_BOT_TOKEN env var");
+  }
+  return new WebClient(token);
+}
+
+function getSlackTeamId() {
+  const teamId = process.env.SLACK_TEAM_ID;
+  if (!teamId) {
+    throw new Error("Missing SLACK_TEAM_ID env var");
+  }
+  return teamId;
+}
+
+app.get("/sse", async (req, res) => {
+  console.log("New SSE connection established");
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const transport = new SSEServerTransport("/message", res);
+
   const server = new Server(
-    {
-      name: 'slack-mcp-server',
-      version: '0.1.0',
-    },
-    {
-      capabilities: {
-        tools: {},
-      },
-    }
+    { name: "slack-mcp-server", version: "0.1.0" },
+    { capabilities: { tools: {} } }
   );
 
-  // Define tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: 'slack_list_channels',
-        description: 'List public channels in the workspace',
+        name: "slack_list_channels",
+        description: "List public channels in the workspace",
         inputSchema: {
-          type: 'object',
+          type: "object",
           properties: {
-            limit: { type: 'number', description: 'Maximum number of channels', default: 100 }
-          }
-        }
+            limit: {
+              type: "number",
+              description: "Maximum number of channels",
+              default: 100,
+            },
+          },
+        },
       },
       {
-        name: 'slack_post_message',
-        description: 'Post a message to a Slack channel',
+        name: "slack_post_message",
+        description: "Post a message to a Slack channel",
         inputSchema: {
-          type: 'object',
+          type: "object",
           properties: {
-            channel_id: { type: 'string', description: 'Channel ID' },
-            text: { type: 'string', description: 'Message text' }
+            channel_id: { type: "string", description: "Channel ID" },
+            text: { type: "string", description: "Message text" },
           },
-          required: ['channel_id', 'text']
-        }
+          required: ["channel_id", "text"],
+        },
       },
       {
-        name: 'slack_get_channel_history',
-        description: 'Get recent messages from a channel',
+        name: "slack_get_channel_history",
+        description: "Get recent messages from a channel",
         inputSchema: {
-          type: 'object',
+          type: "object",
           properties: {
-            channel_id: { type: 'string', description: 'Channel ID' },
-            limit: { type: 'number', description: 'Number of messages', default: 10 }
+            channel_id: { type: "string", description: "Channel ID" },
+            limit: {
+              type: "number",
+              description: "Number of messages",
+              default: 10,
+            },
           },
-          required: ['channel_id']
-        }
-      }
-    ]
+          required: ["channel_id"],
+        },
+      },
+    ],
   }));
 
-  // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
+      const slack = getSlackClient();
+      const SLACK_TEAM_ID = getSlackTeamId();
+
       switch (request.params.name) {
-        case 'slack_list_channels': {
+        case "slack_list_channels": {
+          const limit = request.params.arguments?.limit || 100;
           const result = await slack.conversations.list({
             team_id: SLACK_TEAM_ID,
-            limit: request.params.arguments?.limit || 100,
-            types: 'public_channel'
+            limit,
+            types: "public_channel",
           });
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify(result.channels, null, 2)
-            }]
+            content: [
+              { type: "text", text: JSON.stringify(result.channels, null, 2) },
+            ],
           };
         }
-        
-        case 'slack_post_message': {
+
+        case "slack_post_message": {
+          const { channel_id, text } = request.params.arguments || {};
+          if (!channel_id || !text) {
+            throw new Error("Missing required arguments: channel_id, text");
+          }
           const result = await slack.chat.postMessage({
-            channel: request.params.arguments.channel_id,
-            text: request.params.arguments.text
+            channel: channel_id,
+            text,
           });
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify(result, null, 2)
-            }]
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
         }
-        
-        case 'slack_get_channel_history': {
+
+        case "slack_get_channel_history": {
+          const { channel_id } = request.params.arguments || {};
+          const limit = request.params.arguments?.limit || 10;
+          if (!channel_id) {
+            throw new Error("Missing required argument: channel_id");
+          }
           const result = await slack.conversations.history({
-            channel: request.params.arguments.channel_id,
-            limit: request.params.arguments?.limit || 10
+            channel: channel_id,
+            limit,
           });
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify(result.messages, null, 2)
-            }]
+            content: [
+              { type: "text", text: JSON.stringify(result.messages, null, 2) },
+            ],
           };
         }
-        
+
         default:
           throw new Error(`Unknown tool: ${request.params.name}`);
       }
     } catch (error) {
       return {
-        content: [{
-          type: 'text',
-          text: `Error: ${error.message}`
-        }],
-        isError: true
+        content: [{ type: "text", text: `Error: ${error?.message || error}` }],
+        isError: true,
       };
     }
   });
 
-  await server.connect(transport);
-  console.log('MCP server connected to SSE transport');
+  try {
+    await server.connect(transport);
+    console.log("MCP server connected to SSE transport");
+  } catch (err) {
+    console.error("Failed to connect MCP server to SSE transport:", err);
+    try {
+      res.status(500).end();
+    } catch (_) {}
+    return;
+  }
 
-  req.on('close', () => {
-    console.log('Client disconnected');
+  req.on("close", () => {
+    console.log("Client disconnected");
   });
 });
 
-app.post('/message', express.json(), async (req, res) => {
-  res.json({ status: 'ok' });
+app.post("/message", async (req, res) => {
+  res.status(200).json({ status: "ok" });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`SSE MCP Server running on port ${PORT}`);
-  console.log(`SSE endpoint available at /sse`);
+const httpServer = app.listen(PORT, HOST, () => {
+  console.log(`SSE MCP Server running on http://${HOST}:${PORT}`);
+  console.log("SSE endpoint available at /sse");
 });
+
+httpServer.keepAliveTimeout = 65_000;
+httpServer.headersTimeout = 66_000;
