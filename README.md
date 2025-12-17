@@ -57,7 +57,7 @@ Navigate to **"OAuth & Permissions"** and add these scopes:
 
 ## Usage
 
-### Using Docker Compose (Recommended)
+### Using Docker Compose
 
 1. Clone this repository
 2. Create a `.env` file in the project root (you can use `.env.example` as a template):
@@ -76,7 +76,7 @@ docker compose up
 ### Using Pre-built Image from Docker Hub
 
 ```bash
-docker pull yourusername/slack-mcp-server:latest
+docker pull kghamilton89/slack-mcp-server:latest
 ```
 
 ## Connecting to Strawberry Browser
