@@ -19,7 +19,10 @@ app.use(express.json({ limit: "1mb" }));
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Session-Id");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, MCP-Session-Id"
+  );
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
@@ -99,6 +102,48 @@ function createMcpServer() {
           required: ["channel_id"],
         },
       },
+      {
+        name: "slack_find_user",
+        description: "Find a Slack user by email or name and return matching user IDs",
+        inputSchema: {
+          type: "object",
+          properties: {
+            email: { type: "string", description: "User email address" },
+            query: { type: "string", description: "Name or handle fragment" },
+            limit: { type: "number", description: "Max results", default: 10 },
+          },
+        },
+      },
+      {
+        name: "slack_open_dm",
+        description:
+          "Open or find a direct message (IM) channel with a user and return the DM channel ID",
+        inputSchema: {
+          type: "object",
+          properties: {
+            user_id: {
+              type: "string",
+              description: "Slack user ID (e.g., U012ABCDEF)",
+            },
+          },
+          required: ["user_id"],
+        },
+      },
+      {
+        name: "slack_send_dm",
+        description: "Send a direct message to a user (by user_id)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            user_id: {
+              type: "string",
+              description: "Slack user ID (e.g., U012ABCDEF)",
+            },
+            text: { type: "string", description: "Message text" },
+          },
+          required: ["user_id", "text"],
+        },
+      },
     ],
   }));
 
@@ -116,14 +161,21 @@ function createMcpServer() {
             types: "public_channel",
           });
           return {
-            content: [{ type: "text", text: JSON.stringify(result.channels, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(result.channels, null, 2) },
+            ],
           };
         }
 
         case "slack_post_message": {
           const { channel_id, text } = request.params.arguments || {};
-          if (!channel_id || !text) throw new Error("Missing required arguments: channel_id, text");
-          const result = await slack.chat.postMessage({ channel: channel_id, text });
+          if (!channel_id || !text) {
+            throw new Error("Missing required arguments: channel_id, text");
+          }
+          const result = await slack.chat.postMessage({
+            channel: channel_id,
+            text,
+          });
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
@@ -132,10 +184,96 @@ function createMcpServer() {
         case "slack_get_channel_history": {
           const { channel_id } = request.params.arguments || {};
           const limit = request.params.arguments?.limit || 10;
-          if (!channel_id) throw new Error("Missing required argument: channel_id");
-          const result = await slack.conversations.history({ channel: channel_id, limit });
+          if (!channel_id) {
+            throw new Error("Missing required argument: channel_id");
+          }
+          const result = await slack.conversations.history({
+            channel: channel_id,
+            limit,
+          });
           return {
-            content: [{ type: "text", text: JSON.stringify(result.messages, null, 2) }],
+            content: [
+              { type: "text", text: JSON.stringify(result.messages, null, 2) },
+            ],
+          };
+        }
+
+        case "slack_find_user": {
+          const { email, query, limit = 10 } = request.params.arguments || {};
+          if (!email && !query) {
+            throw new Error("Provide either email or query");
+          }
+
+          if (email) {
+            const r = await slack.users.lookupByEmail({ email });
+            return {
+              content: [{ type: "text", text: JSON.stringify({ user: r.user }, null, 2) }],
+            };
+          }
+
+          const list = await slack.users.list({ limit: 200 });
+          const q = String(query).toLowerCase();
+
+          const matches = (list.members || [])
+            .filter((u) => !u.deleted && !u.is_bot)
+            .filter((u) => {
+              const fields = [
+                u.name,
+                u.real_name,
+                u.profile?.display_name,
+                u.profile?.real_name,
+                u.profile?.email,
+              ]
+                .filter(Boolean)
+                .map((s) => String(s).toLowerCase());
+              return fields.some((f) => f.includes(q));
+            })
+            .slice(0, limit);
+
+          return {
+            content: [{ type: "text", text: JSON.stringify({ matches }, null, 2) }],
+          };
+        }
+
+        case "slack_open_dm": {
+          const { user_id } = request.params.arguments || {};
+          if (!user_id) throw new Error("Missing required argument: user_id");
+
+          const r = await slack.conversations.open({ users: user_id });
+          const channelId = r.channel?.id;
+          if (!channelId) throw new Error("Failed to open DM channel");
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  { channel_id: channelId, channel: r.channel },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
+        case "slack_send_dm": {
+          const { user_id, text } = request.params.arguments || {};
+          if (!user_id || !text) {
+            throw new Error("Missing required arguments: user_id, text");
+          }
+
+          const open = await slack.conversations.open({ users: user_id });
+          const channelId = open.channel?.id;
+          if (!channelId) throw new Error("Failed to open DM channel");
+
+          const result = await slack.chat.postMessage({
+            channel: channelId,
+            text,
+          });
+
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           };
         }
 
@@ -171,7 +309,10 @@ async function handleMcp(req, res) {
     if (!isInitializeRequest(body)) {
       res.status(400).json({
         jsonrpc: "2.0",
-        error: { code: -32000, message: "Bad Request: No valid session; initialize required" },
+        error: {
+          code: -32000,
+          message: "Bad Request: No valid session; initialize required",
+        },
         id: body?.id ?? null,
       });
       return;
@@ -205,7 +346,10 @@ app.post("/sse/mcp", (req, res) => {
     try {
       res.status(500).json({
         jsonrpc: "2.0",
-        error: { code: -32000, message: `Internal Server Error: ${err?.message || err}` },
+        error: {
+          code: -32000,
+          message: `Internal Server Error: ${err?.message || err}`,
+        },
         id: req.body?.id ?? null,
       });
     } catch (_) {}
