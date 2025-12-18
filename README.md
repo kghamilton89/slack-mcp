@@ -10,13 +10,19 @@ It is inspired by the original Anthropic MCP Slack example, but adapted for **re
 
 ## Features
 
-- List public Slack channels
-- Post messages to channels
-- Read channel message history
-- Find Slack users by email or name
-- Send direct messages (DMs) to users
-- MCP-compatible over HTTP (Claude & Strawberry compatible)
-- Production-ready for Railway deployments
+- List public Slack channels  
+- Join existing public channels  
+- Create and manage public channels  
+- Post messages to channels  
+- Read channel message history  
+- Add and remove emoji reactions  
+- Read emoji reactions on messages  
+- Find Slack users by email or name  
+- Retrieve detailed user profiles  
+- Open and list direct message (DM) channels  
+- Read direct message history  
+- Send direct messages (DMs) to users  
+- Create, read, edit, and delete Slack canvases 
 
 ---
 
@@ -41,16 +47,24 @@ It is inspired by the original Anthropic MCP Slack example, but adapted for **re
 
 Navigate to **OAuth & Permissions** and add the following **Bot Token Scopes**:
 
-- `chat:write`
+- `app_mentions:read`
+- `canvases:read`
+- `canvases:write`
 - `channels:read`
 - `channels:history`
+- `channels:join`
+- `channels:manage`
+- `chat:write`
+- `im:read`
+- `im:write`
+- `im:history`
+- `reactions:read`
+- `reactions:write`
 - `users:read`
 - `users:read.email`
-- `im:write`
-- `conversations:read`
-- `conversations:write`
+- `users.profile:read`
 
-These scopes are required for posting messages, reading channels, finding users, and sending direct messages.
+These scopes are required for posting messages, reading channels, finding users, sending direct messages, managing Canvases, and other tasks possible using the MCP server.
 
 ### 3. Install the App to Your Workspace
 
@@ -137,19 +151,37 @@ Once connected, Claude can call Slack tools directly in chat.
 
 ---
 
-## Available MCP Tools
+## Tools
+
+All tools included in the server are enumerated below.
 
 ### Channel & Message Tools
 
-- `slack_list_channels` – List public Slack channels
-- `slack_post_message` – Post a message to a channel
-- `slack_get_channel_history` – Get recent messages from a channel
+- `slack_list_channels` – List public Slack channels  
+- `slack_join_channel` – Join an existing public channel  
+- `slack_create_channel` – Create a new public channel  
+- `slack_rename_channel` – Rename an existing channel  
+- `slack_post_message` – Post a message to a channel  
+- `slack_get_channel_history` – Get recent messages from a channel  
+- `slack_add_reaction` – Add an emoji reaction to a message  
+- `slack_remove_reaction` – Remove an emoji reaction from a message  
+- `slack_get_reactions` – List reactions on a message  
 
 ### User & Direct Message Tools
 
-- `slack_find_user` – Find users by email or name
-- `slack_open_dm` – Open a DM channel with a user
-- `slack_send_dm` – Send a direct message to a user
+- `slack_find_user` – Find users by email or name  
+- `slack_get_user_profile` – Retrieve a user’s profile information  
+- `slack_open_dm` – Open a direct message (DM) channel with a user  
+- `slack_list_dms` – List direct message channels  
+- `slack_get_dm_history` – Get message history from a DM channel  
+- `slack_send_dm` – Send a direct message to a user  
+
+### Canvas Tools
+
+- `slack_canvas_create` – Create a Slack canvas  
+- `slack_canvas_get` – Retrieve a Slack canvas  
+- `slack_canvas_edit` – Edit an existing Slack canvas  
+- `slack_canvas_delete` – Delete a Slack canvas  
 
 ---
 
@@ -157,6 +189,6 @@ Once connected, Claude can call Slack tools directly in chat.
 
 Issues and pull requests are welcome.
 
-## Notes
+## Disclaimer
 
 I'm just a guy on the internet and you're deploying powerful code with serious implications for the privacy of your own and others' data. Please make sure that you understand this process, including its risks, completely and protect your Railway URL from exposure as this will give anyone the ability to directly access your Slack Workspace.
