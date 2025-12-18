@@ -88,7 +88,7 @@ These scopes are required for posting messages, reading channels, finding users,
 
 ### 2. Deploy to Railway
 
-1. Go to `https://railway.app` (sign up if needed)
+1. Go to `https://railway.app` ([sign up with my referral link](https://railway.com?referralCode=ozpZCF) if needed)
 2. Click **New Project**
 3. Choose **Deploy from GitHub Repo**
 4. Select your forked repository
