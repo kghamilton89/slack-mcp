@@ -22,7 +22,7 @@ It is inspired by the original Anthropic MCP Slack example, but adapted for **re
 - Open and list direct message (DM) channels  
 - Read direct message history  
 - Send direct messages (DMs) to users  
-- Create, read, edit, and delete Slack canvases 
+- Create, read, edit, and delete Slack canvases
 
 ---
 
